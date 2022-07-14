@@ -1,4 +1,4 @@
-// LANDING THOTTLE MANAGER:
+// LANDING THOTTLE MANAGER
 
 // This plugin will manage the throttle and reverse thrust during landing
 // which helps when using VR as the pilot can concentrate on getting the threshold
@@ -410,43 +410,43 @@ int LandingThrottleManager_Init
   XPLMMenuID ParentMenuId
   )
 {
-  XPLMMenuID myMenu2;
-  int mySubMenuItem2;
+  XPLMMenuID myMenu;
+  int mySubMenuItem;
 
   // not ready until we know what aircraft will be used
   Ready = FALSE;
 
-  mySubMenuItem2 = XPLMAppendMenuItem(
+  mySubMenuItem = XPLMAppendMenuItem(
     ParentMenuId,
-    "Landing Throttle Manager",
+    MODULE_NAME,
     0,
     1);
 
-  myMenu2 = XPLMCreateMenu(
-    "Landing Throttle Manager",
+  myMenu = XPLMCreateMenu(
+    MODULE_NAME,
     ParentMenuId,
-    mySubMenuItem2,
+    mySubMenuItem,
     MenuHandlerCallback,
     0
   );
 
   // Append menu items to our submenu
   XPLMAppendMenuItem(
-    myMenu2,
+    myMenu,
     "Enable",
     (void *)MENU_ITEM_ID_ENABLE,
     1);
   XPLMAppendMenuItem(
-    myMenu2,
+    myMenu,
     "Stop and disable",
     (void *)MENU_ITEM_ID_STOP,
     1);
 
   // create custom command
   char CmdName[100];
-  sprintf_s(CmdName, 100, "%s//Enable", MODULE_NAME);
+  sprintf_s(CmdName, 100, "%s//%s//Enable", PLUGIN_NAME, MODULE_NAME);
   char CmdDesc[100];
-  sprintf_s(CmdDesc, 100, "Enable the %s", MODULE_NAME);
+  sprintf_s(CmdDesc, 100, "Enable the throttle manager (%s-%s)", PLUGIN_NAME, MODULE_NAME);
   EnableCmd = XPLMCreateCommand(CmdName, CmdDesc);
   XPLMRegisterCommandHandler(
     EnableCmd,         // in Command name

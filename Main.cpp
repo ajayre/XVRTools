@@ -17,10 +17,11 @@
 #include "Global.h"
 
 #include "LandingThrottleManager.h"
+#include "ParkingBrake.h"
+
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 // INTERNAL FUNCTIONS
-
 
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -67,6 +68,11 @@ PLUGIN_API int XPluginStart
     return FALSE;
   }
 
+  if (!ParkingBrake_Init(myMenu))
+  {
+    return FALSE;
+  }
+
   return TRUE;
 }
 
@@ -101,4 +107,5 @@ PLUGIN_API void XPluginReceiveMessage
   )
 {
   LandingThrottleManager_ReceiveMessage(inFromWho, inMessage, inParam);
+  ParkingBrake_ReceiveMessage(inFromWho, inMessage, inParam);
 }
