@@ -1,2 +1,2 @@
-# landingthrottlemanager
-Manager for throttle when landing in X-Plane
+# XVRTools
+Tools for use in X-Plane when using pure VR
