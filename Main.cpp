@@ -32,6 +32,8 @@
 #include "XPLMUtilities.h"
 #include "XPLMPlugin.h"
 
+#include "LandingThrottleManager.h"
+
 // basic plugin information
 #define PLUGIN_NAME "XVRTools"
 #define PLUGIN_VERSION_MAJOR 1
@@ -452,7 +454,9 @@ PLUGIN_API int XPluginStart
   )
 {
   XPLMMenuID myMenu;
+  XPLMMenuID myMenu2;
   int	mySubMenuItem;
+  int mySubMenuItem2;
 
   Diagnostic_printf("%s version %d.%d.%d\n", PLUGIN_NAME, PLUGIN_VERSION_MAJOR, PLUGIN_VERSION_MINOR, PLUGIN_VERSION_DOT);
   Diagnostic_printf("%s\n", PLUGIN_COPYRIGHT);
@@ -460,7 +464,7 @@ PLUGIN_API int XPluginStart
   // Provide our plugin's profile to the plugin system
   strcpy_s(outName, 256, PLUGIN_NAME);
   strcpy_s(outSig, 256, "britishideas.assistants.xvrtools");
-  strcpy_s(outDesc, 256, "Tools VR users");
+  strcpy_s(outDesc, 256, "Tools for VR users");
 
   // not ready until we know what aircraft will be used
   Ready = FALSE;
@@ -475,20 +479,34 @@ PLUGIN_API int XPluginStart
 	
 	// Now create a submenu attached to our menu item
 	myMenu = XPLMCreateMenu(
-    "Landing Throttle Manager",
+    PLUGIN_NAME,
 		XPLMFindPluginsMenu(), 
 		mySubMenuItem, 			    // Menu Item to attach to
 		MenuHandlerCallback,	  // The handler
 		0);						          // Handler Ref
-						
+
+  mySubMenuItem2 = XPLMAppendMenuItem(
+    myMenu,
+    "Landing Throttle Manager",
+    0,
+    1);
+
+  myMenu2 = XPLMCreateMenu(
+    "Landing Throttle Manager",
+    myMenu,
+    mySubMenuItem2,
+    MenuHandlerCallback,
+    0
+  );
+
   // Append menu items to our submenu
 	XPLMAppendMenuItem(
-		myMenu,
+		myMenu2,
 		"Enable",
 		(void *)MENU_ITEM_ID_ENABLE,
 		1);
   XPLMAppendMenuItem(
-    myMenu,
+    myMenu2,
     "Stop and disable",
     (void *)MENU_ITEM_ID_STOP,
     1);
