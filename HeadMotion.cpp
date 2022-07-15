@@ -17,20 +17,22 @@
 // menu item IDs
 #define MENU_ITEM_ID_TOUCHDOWN_DISABLE 1
 
-// commands and data references that we need
+// custom commands
 static XPLMCommandRef DisableTouchDownCmd = NULL;
 
-// custom datarefs
-static XPLMDataRef PilotXRef       = NULL;
-static XPLMDataRef PilotYRef       = NULL;
-static XPLMDataRef PilotZRef       = NULL;
-static XPLMDataRef PilotHeadingRef = NULL;
-static XPLMDataRef PilotPitchRef   = NULL;
-static XPLMDataRef PilotRollRef    = NULL;
-static XPLMDataRef AnyWheelOnGroundRef = NULL;
-static XPLMDataRef UpwardGearGroundForceNRef = NULL;
-static XPLMDataRef TotalDownwardGForceRef = NULL;
-static XPLMDataRef GearVerticalForceNmRef = NULL;
+// commands and data references that we need
+static XPLMDataRef    PilotXRef                 = NULL;
+static XPLMDataRef    PilotYRef                 = NULL;
+static XPLMDataRef    PilotZRef                 = NULL;
+static XPLMDataRef    PilotHeadingRef           = NULL;
+static XPLMDataRef    PilotPitchRef             = NULL;
+static XPLMDataRef    PilotRollRef              = NULL;
+static XPLMDataRef    AnyWheelOnGroundRef       = NULL;
+static XPLMDataRef    UpwardGearGroundForceNRef = NULL;
+static XPLMDataRef    TotalDownwardGForceRef    = NULL;
+static XPLMDataRef    GearVerticalForceNmRef    = NULL;
+static XPLMCommandRef DownFastCmd               = NULL;
+static XPLMCommandRef UpFastCmd                 = NULL;
 
 // prototype for the function that handles menu choices
 static void	MenuHandlerCallback(void *inMenuRef, void *inItemRef);
@@ -61,12 +63,14 @@ static bool Ready = FALSE;
 static float TouchdownTime;
 static pilots_head_t InitialHeadPosition;
 static double LandingShakeAmplitude;
+static double TargetPilotY;
+static XPLMCommandRef ActiveMovementCommand;
 
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 // INTERNAL FUNCTIONS
 
-// rotates the pilots head up or down
+/*// rotates the pilots head up or down
 static void MovePilotsHeadUpDown
 (
   double Degrees  // negative is down, positive is up
@@ -93,7 +97,7 @@ static void SetPilotHeadHeight
   )
 {
   XPLMSetDataf(PilotYRef, Meters);
-}
+}*/
 
 // enables the touch down motion
 static void DisableTouchDownMotion
@@ -117,18 +121,36 @@ static void GetHeadPosition
   Position->Roll    = XPLMGetDataf(PilotRollRef);
 }
 
-// gets the position of the pilot's head
-static void SetHeadPosition
+// starts the pilots head motion
+static void StartMotion
   (
-  pilots_head_t Position  // new position to use
+  double TargetPilotY  // target Y position for pilot's head
   )
 {
-  XPLMSetDataf(PilotXRef,       Position.x);
-  XPLMSetDataf(PilotYRef,       Position.y);
-  XPLMSetDataf(PilotZRef,       Position.z);
-  XPLMSetDataf(PilotHeadingRef, Position.Heading);
-  XPLMSetDataf(PilotPitchRef,   Position.Pitch);
-  XPLMSetDataf(PilotRollRef,    Position.Roll);
+  double CurrentPilotY = XPLMGetDataf(PilotYRef);
+  if (TargetPilotY < CurrentPilotY)
+  {
+    ActiveMovementCommand = DownFastCmd;
+    XPLMCommandBegin(ActiveMovementCommand);
+  }
+  else if (TargetPilotY > CurrentPilotY)
+  {
+    ActiveMovementCommand = UpFastCmd;
+    XPLMCommandBegin(ActiveMovementCommand);
+  }
+}
+
+// stops the current motion
+static void StopMotion
+  (
+  void
+  )
+{
+  if (ActiveMovementCommand != NULL)
+  {
+    XPLMCommandEnd(ActiveMovementCommand);
+    ActiveMovementCommand = NULL;
+  }
 }
 
 // execute the state machine, called periodically by x-plane
@@ -202,16 +224,14 @@ static float StateMachine
         // y\ =\ -\left(0.1e^{-2x}\cdot\cos\left(30x\right)\right)
 
         double PilotYOffset = -(LandingShakeAmplitude * exp(-2 * (elapsedSim - TouchdownTime)) * cos(30 * (elapsedSim - TouchdownTime)));
-        SetPilotHeadHeight(InitialHeadPosition.y + PilotYOffset);
+        TargetPilotY = InitialHeadPosition.y + PilotYOffset;
+        StartMotion(TargetPilotY);
 
         return STATE_MACHINE_EXECUTION_INTERVAL_PERFORMANCE;
       }
       break;
 
     case TOUCHDOWN:
-      double PilotYOffset = -(LandingShakeAmplitude * exp(-2 * (elapsedSim - TouchdownTime)) * cos(30 * (elapsedSim - TouchdownTime)));
-      SetPilotHeadHeight(InitialHeadPosition.y + PilotYOffset);
-
       // if it's been 1.5 seconds since first wheel down then
       // end head motion
       if (elapsedSim > (TouchdownTime + 1.5))
@@ -219,13 +239,44 @@ static float StateMachine
 #if DIAGNOSTIC == 1
         Diagnostic_printf("On ground long enough, ending landing head motion\n");
 #endif // DIAGNOSTIC
-        SetHeadPosition(InitialHeadPosition);
+
+        StopMotion();
+
         CurrentState = WAIT_FOR_TAKEOFF;
+
+        return STATE_MACHINE_EXECUTION_INTERVAL_NORMAL;
       }
-      else
+
+      // check if we need to change the direction of movement
+      double CurrentPilotY = XPLMGetDataf(PilotYRef);
+      bool ChangeDirection = FALSE;
+      if (ActiveMovementCommand == DownFastCmd)
       {
-        return STATE_MACHINE_EXECUTION_INTERVAL_PERFORMANCE;
+        if (CurrentPilotY <= TargetPilotY)
+        {
+          XPLMCommandEnd(ActiveMovementCommand);
+          ChangeDirection = TRUE;
+          ActiveMovementCommand = NULL;
+        }
       }
+      else if (ActiveMovementCommand == UpFastCmd)
+      {
+        if (CurrentPilotY >= TargetPilotY)
+        {
+          XPLMCommandEnd(ActiveMovementCommand);
+          ChangeDirection = TRUE;
+          ActiveMovementCommand = NULL;
+        }
+      }
+
+      // change direction of movement
+      if (ChangeDirection)
+      {
+        double PilotYOffset = -(LandingShakeAmplitude * exp(-2 * (elapsedSim - TouchdownTime)) * cos(30 * (elapsedSim - TouchdownTime)));
+        TargetPilotY = InitialHeadPosition.y + PilotYOffset;
+        StartMotion(TargetPilotY);
+      }
+      return STATE_MACHINE_EXECUTION_INTERVAL_PERFORMANCE;
       break;
   }
 
@@ -363,6 +414,16 @@ int HeadMotion_Init
   {
     return FALSE;
   }
+  DownFastCmd = XPLMFindCommand("sim/general/down_fast");
+  if (DownFastCmd == NULL)
+  {
+    return FALSE;
+  }
+  UpFastCmd = XPLMFindCommand("sim/general/up_fast");
+  if (UpFastCmd == NULL)
+  {
+    return FALSE;
+  }
 
   // register the state machine callback
   XPLMRegisterFlightLoopCallback(StateMachine, STATE_MACHINE_EXECUTION_INTERVAL_NORMAL, NULL);
@@ -395,6 +456,6 @@ void HeadMotion_ReceiveMessage
 //    Diagnostic_printf("Plane crashed or unloaded, stopped\n");
 //#endif // DIAGNOSTIC
 //    Ready = FALSE;
-    SetHeadPosition(InitialHeadPosition);
+    StopMotion();
   }
 }
