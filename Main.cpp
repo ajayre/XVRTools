@@ -18,6 +18,7 @@
 
 #include "LandingThrottleManager.h"
 #include "ParkingBrake.h"
+#include "HeadMotion.h"
 
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -73,6 +74,11 @@ PLUGIN_API int XPluginStart
     return FALSE;
   }
 
+  if (!HeadMotion_Init(myMenu))
+  {
+    return FALSE;
+  }
+
   return TRUE;
 }
 
@@ -108,4 +114,5 @@ PLUGIN_API void XPluginReceiveMessage
 {
   LandingThrottleManager_ReceiveMessage(inFromWho, inMessage, inParam);
   ParkingBrake_ReceiveMessage(inFromWho, inMessage, inParam);
+  HeadMotion_ReceiveMessage(inFromWho, inMessage, inParam);
 }

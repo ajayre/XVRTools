@@ -148,6 +148,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="Diagnostic.cpp" />
+    <ClCompile Include="HeadMotion.cpp" />
     <ClCompile Include="LandingThrottleManager.cpp" />
     <ClCompile Include="Main.cpp" />
     <ClCompile Include="ParkingBrake.cpp" />
@@ -155,6 +156,7 @@
   <ItemGroup>
     <ClInclude Include="Diagnostic.h" />
     <ClInclude Include="Global.h" />
+    <ClInclude Include="HeadMotion.h" />
     <ClInclude Include="LandingThrottleManager.h" />
     <ClInclude Include="ParkingBrake.h" />
   </ItemGroup>

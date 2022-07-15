@@ -103,12 +103,12 @@ static _known_aircraft_t KnownAircrafts[] =
 // execute the state machine, called periodically by x-plane
 // returns the number of seconds to the next execution
 static float StateMachine
-(
+  (
   float elapsedMe,
   float elapsedSim,
   int counter,
   void *refcon
-)
+  )
 {
   if (Ready == FALSE) return STATE_MACHINE_EXECUTION_INTERVAL;
 
