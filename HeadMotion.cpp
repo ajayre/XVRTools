@@ -10,7 +10,7 @@
 
 // time between executions of the state machine, in seconds
 #define STATE_MACHINE_EXECUTION_INTERVAL_NORMAL 0.25f
-#define STATE_MACHINE_EXECUTION_INTERVAL_PERFORMANCE 0.01f
+#define STATE_MACHINE_EXECUTION_INTERVAL_PERFORMANCE 0.001f
 // set to 1 to enable diagnostic output to Log.txt
 #define DIAGNOSTIC 1
 
@@ -31,8 +31,8 @@ static XPLMDataRef    AnyWheelOnGroundRef       = NULL;
 static XPLMDataRef    UpwardGearGroundForceNRef = NULL;
 static XPLMDataRef    TotalDownwardGForceRef    = NULL;
 static XPLMDataRef    GearVerticalForceNmRef    = NULL;
-static XPLMCommandRef DownFastCmd               = NULL;
-static XPLMCommandRef UpFastCmd                 = NULL;
+static XPLMCommandRef DownCmd                   = NULL;
+static XPLMCommandRef UpCmd                     = NULL;
 
 // prototype for the function that handles menu choices
 static void	MenuHandlerCallback(void *inMenuRef, void *inItemRef);
@@ -44,6 +44,7 @@ typedef enum _states_t
   WAIT_FOR_TAKEOFF,
   WAIT_FOR_LANDING,
   TOUCHDOWN,
+  MOVE_UP,
   RESTORING_POSITION
 } states_t;
 
@@ -62,6 +63,7 @@ static states_t CurrentState;
 // flag to indicate if we are ready for use
 static bool Ready = FALSE;
 static float TouchdownTime;
+static float BottomTime;
 static pilots_head_t InitialHeadPosition;
 static double LandingShakeAmplitude;
 static double TargetPilotY;
@@ -131,12 +133,12 @@ static void StartMotion
   double CurrentPilotY = XPLMGetDataf(PilotYRef);
   if (TargetPilotY < CurrentPilotY)
   {
-    ActiveMovementCommand = DownFastCmd;
+    ActiveMovementCommand = DownCmd;
     XPLMCommandBegin(ActiveMovementCommand);
   }
   else if (TargetPilotY > CurrentPilotY)
   {
-    ActiveMovementCommand = UpFastCmd;
+    ActiveMovementCommand = UpCmd;
     XPLMCommandBegin(ActiveMovementCommand);
   }
 }
@@ -180,6 +182,7 @@ static float StateMachine
         Diagnostic_printf("Waiting for X-plane to finish initial aircraft drop\n");
 #endif // DIAGNOSTIC
         CurrentState = WAIT_FOR_TAKEOFF;
+        GetHeadPosition(&InitialHeadPosition);
       }
       break;
 
@@ -205,17 +208,18 @@ static float StateMachine
 #endif // DIAGNOSTIC
         CurrentState = TOUCHDOWN;
         TouchdownTime = elapsedSim;
-        GetHeadPosition(&InitialHeadPosition);
 #if DIAGNOSTIC == 1
         Diagnostic_printf("Got head height of = %f\n", InitialHeadPosition.y);
 #endif // DIAGNOSTIC
 
         double TouchDownG = XPLMGetDataf(TotalDownwardGForceRef) - 1.0;
 
-        // scale shaking amplitude so TouchdownG 0.0 -> 2.0 = shake amplitude 0.0 -> 0.05
+        // scale shaking amplitude so TouchdownG 0.0 -> 2.0 = shake amplitude 0.0 -> 0.005
 
-        double Slope = 2.0 / 0.05;
+        double Slope = 2.0 / 0.005;
         LandingShakeAmplitude = TouchDownG / Slope;
+        if (LandingShakeAmplitude < 0) LandingShakeAmplitude = 0;
+        LandingShakeAmplitude = 0.0001;
 
 #if DIAGNOSTIC == 1
         Diagnostic_printf("Landing shake amplitude = %fm\n", LandingShakeAmplitude);
@@ -228,16 +232,62 @@ static float StateMachine
         // https://www.desmos.com/calculator
         // y\ =\ -\left(0.1e^{-2x}\cdot\cos\left(30x\right)\right)
 
-        double PilotYOffset = -(LandingShakeAmplitude * exp(-2 * (elapsedSim - TouchdownTime)) * cos(30 * (elapsedSim - TouchdownTime)));
-        TargetPilotY = InitialHeadPosition.y + PilotYOffset;
-        StartMotion(TargetPilotY);
+        if (LandingShakeAmplitude > 0)
+        {
+          //double PilotYOffset = -(LandingShakeAmplitude * exp(-2 * (elapsedSim - TouchdownTime)) * cos(30 * (elapsedSim - TouchdownTime)));
+          //TargetPilotY = InitialHeadPosition.y + PilotYOffset;
+          TargetPilotY = InitialHeadPosition.y - LandingShakeAmplitude;
+          XPLMCommandBegin(DownCmd);
+          //StartMotion(TargetPilotY);
+#if DIAGNOSTIC == 1
+          Diagnostic_printf("Moving head down, target position of %f\n", TargetPilotY);
+#endif // DIAGNOSTIC
 
-        NextInterval = STATE_MACHINE_EXECUTION_INTERVAL_PERFORMANCE;
+          NextInterval = STATE_MACHINE_EXECUTION_INTERVAL_PERFORMANCE;
+        }
+        else
+        {
+          CurrentState = WAIT_FOR_TAKEOFF;
+        }
       }
       break;
 
     case TOUCHDOWN:
-      // if it's been 1.5 seconds since first wheel down then
+      {
+        double CurrentPilotY = XPLMGetDataf(PilotYRef);
+
+        if (CurrentPilotY <= TargetPilotY)
+        {
+          XPLMCommandEnd(DownCmd);
+#if DIAGNOSTIC == 1
+          Diagnostic_printf("Bottom of bounce, current position is %f, going back to %f\n", CurrentPilotY, InitialHeadPosition.y);
+#endif // DIAGNOSTIC
+
+          CurrentState = MOVE_UP;
+          BottomTime = elapsedSim;
+
+          //ChangeDirection = TRUE;
+          //ActiveMovementCommand = NULL;
+          //XPLMCommandBegin(UpCmd);
+          //CurrentState = RESTORING_POSITION;
+        }
+
+        NextInterval = STATE_MACHINE_EXECUTION_INTERVAL_PERFORMANCE;
+      }
+
+      /*if (elapsedSim > (TouchdownTime + 0.5))
+      {
+        StopMotion();
+#if DIAGNOSTIC == 1
+        Diagnostic_printf("Bottom of bounce, current position is %f, going back to %f\n", XPLMGetDataf(PilotYRef), InitialHeadPosition.y);
+#endif // DIAGNOSTIC
+        StartMotion(InitialHeadPosition.y);
+        CurrentState = RESTORING_POSITION;
+      }*/
+
+      //NextInterval = STATE_MACHINE_EXECUTION_INTERVAL_PERFORMANCE;
+
+      /*// if it's been 1.5 seconds since first wheel down then
       // end head motion
       if (elapsedSim > (TouchdownTime + 1.5))
       {
@@ -282,6 +332,15 @@ static float StateMachine
           StartMotion(TargetPilotY);
         }
         NextInterval = STATE_MACHINE_EXECUTION_INTERVAL_PERFORMANCE;
+      }*/
+      break;
+
+    case MOVE_UP:
+      if (elapsedSim >= (BottomTime + 0.2))
+      {
+        XPLMCommandBegin(UpCmd);
+        CurrentState = RESTORING_POSITION;
+        NextInterval = STATE_MACHINE_EXECUTION_INTERVAL_PERFORMANCE;
       }
       break;
 
@@ -289,37 +348,18 @@ static float StateMachine
       {
         double CurrentPilotY = XPLMGetDataf(PilotYRef);
 
-        if (ActiveMovementCommand == DownFastCmd)
+        if (CurrentPilotY >= InitialHeadPosition.y)
         {
-          if (CurrentPilotY <= InitialHeadPosition.y)
-          {
 #if DIAGNOSTIC == 1
-            Diagnostic_printf("Moving head down, reached initial position of %f (current = %f)\n", InitialHeadPosition.y, CurrentPilotY);
+          Diagnostic_printf("End of movement, current position is %f\n", CurrentPilotY);
 #endif // DIAGNOSTIC
-            XPLMCommandEnd(ActiveMovementCommand);
-            ActiveMovementCommand = NULL;
-            CurrentState = WAIT_FOR_TAKEOFF;
-          }
-          else
-          {
-            NextInterval = STATE_MACHINE_EXECUTION_INTERVAL_PERFORMANCE;
-          }
+          XPLMCommandEnd(UpCmd);
+          //ActiveMovementCommand = NULL;
+          CurrentState = WAIT_FOR_TAKEOFF;
         }
-        else if (ActiveMovementCommand == UpFastCmd)
+        else
         {
-          if (CurrentPilotY >= InitialHeadPosition.y)
-          {
-#if DIAGNOSTIC == 1
-            Diagnostic_printf("Moving head up, reached initial position of %f (current = %f)\n", InitialHeadPosition.y, CurrentPilotY);
-#endif // DIAGNOSTIC
-            XPLMCommandEnd(ActiveMovementCommand);
-            ActiveMovementCommand = NULL;
-            CurrentState = WAIT_FOR_TAKEOFF;
-          }
-          else
-          {
-            NextInterval = STATE_MACHINE_EXECUTION_INTERVAL_PERFORMANCE;
-          }
+          NextInterval = STATE_MACHINE_EXECUTION_INTERVAL_PERFORMANCE;
         }
       }
       break;
@@ -459,13 +499,13 @@ int HeadMotion_Init
   {
     return FALSE;
   }
-  DownFastCmd = XPLMFindCommand("sim/general/down_fast");
-  if (DownFastCmd == NULL)
+  DownCmd = XPLMFindCommand("sim/general/down");
+  if (DownCmd == NULL)
   {
     return FALSE;
   }
-  UpFastCmd = XPLMFindCommand("sim/general/up_fast");
-  if (UpFastCmd == NULL)
+  UpCmd = XPLMFindCommand("sim/general/up");
+  if (UpCmd == NULL)
   {
     return FALSE;
   }
