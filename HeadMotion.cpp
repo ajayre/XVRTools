@@ -43,7 +43,8 @@ typedef enum _states_t
   START,
   WAIT_FOR_TAKEOFF,
   WAIT_FOR_LANDING,
-  TOUCHDOWN
+  TOUCHDOWN,
+  RESTORING_POSITION
 } states_t;
 
 typedef struct _pilots_head_t
@@ -164,8 +165,9 @@ static float StateMachine
   )
 {
   float GearForces[3];
+  float NextInterval = STATE_MACHINE_EXECUTION_INTERVAL_NORMAL;
 
-  if (Ready == FALSE) return STATE_MACHINE_EXECUTION_INTERVAL_NORMAL;
+  if (Ready == FALSE) return NextInterval;
 
   switch (CurrentState)
   {
@@ -204,6 +206,9 @@ static float StateMachine
         CurrentState = TOUCHDOWN;
         TouchdownTime = elapsedSim;
         GetHeadPosition(&InitialHeadPosition);
+#if DIAGNOSTIC == 1
+        Diagnostic_printf("Got head height of = %f\n", InitialHeadPosition.y);
+#endif // DIAGNOSTIC
 
         double TouchDownG = XPLMGetDataf(TotalDownwardGForceRef) - 1.0;
 
@@ -227,7 +232,7 @@ static float StateMachine
         TargetPilotY = InitialHeadPosition.y + PilotYOffset;
         StartMotion(TargetPilotY);
 
-        return STATE_MACHINE_EXECUTION_INTERVAL_PERFORMANCE;
+        NextInterval = STATE_MACHINE_EXECUTION_INTERVAL_PERFORMANCE;
       }
       break;
 
@@ -237,50 +242,90 @@ static float StateMachine
       if (elapsedSim > (TouchdownTime + 1.5))
       {
 #if DIAGNOSTIC == 1
-        Diagnostic_printf("On ground long enough, ending landing head motion\n");
+        Diagnostic_printf("On ground long enough, restoring y to %f\n", InitialHeadPosition.y);
 #endif // DIAGNOSTIC
 
-        StopMotion();
+        StartMotion(InitialHeadPosition.y);
+        CurrentState = RESTORING_POSITION;
 
-        CurrentState = WAIT_FOR_TAKEOFF;
-
-        return STATE_MACHINE_EXECUTION_INTERVAL_NORMAL;
+        NextInterval = STATE_MACHINE_EXECUTION_INTERVAL_PERFORMANCE;
       }
-
-      // check if we need to change the direction of movement
-      double CurrentPilotY = XPLMGetDataf(PilotYRef);
-      bool ChangeDirection = FALSE;
-      if (ActiveMovementCommand == DownFastCmd)
+      else
       {
-        if (CurrentPilotY <= TargetPilotY)
+        // check if we need to change the direction of movement
+        double CurrentPilotY = XPLMGetDataf(PilotYRef);
+        bool ChangeDirection = FALSE;
+        if (ActiveMovementCommand == DownFastCmd)
         {
-          XPLMCommandEnd(ActiveMovementCommand);
-          ChangeDirection = TRUE;
-          ActiveMovementCommand = NULL;
+          if (CurrentPilotY <= TargetPilotY)
+          {
+            XPLMCommandEnd(ActiveMovementCommand);
+            ChangeDirection = TRUE;
+            ActiveMovementCommand = NULL;
+          }
+        }
+        else if (ActiveMovementCommand == UpFastCmd)
+        {
+          if (CurrentPilotY >= TargetPilotY)
+          {
+            XPLMCommandEnd(ActiveMovementCommand);
+            ChangeDirection = TRUE;
+            ActiveMovementCommand = NULL;
+          }
+        }
+
+        // change direction of movement
+        if (ChangeDirection)
+        {
+          double PilotYOffset = -(LandingShakeAmplitude * exp(-2 * (elapsedSim - TouchdownTime)) * cos(30 * (elapsedSim - TouchdownTime)));
+          TargetPilotY = InitialHeadPosition.y + PilotYOffset;
+          StartMotion(TargetPilotY);
+        }
+        NextInterval = STATE_MACHINE_EXECUTION_INTERVAL_PERFORMANCE;
+      }
+      break;
+
+    case RESTORING_POSITION:
+      {
+        double CurrentPilotY = XPLMGetDataf(PilotYRef);
+
+        if (ActiveMovementCommand == DownFastCmd)
+        {
+          if (CurrentPilotY <= InitialHeadPosition.y)
+          {
+#if DIAGNOSTIC == 1
+            Diagnostic_printf("Moving head down, reached initial position of %f (current = %f)\n", InitialHeadPosition.y, CurrentPilotY);
+#endif // DIAGNOSTIC
+            XPLMCommandEnd(ActiveMovementCommand);
+            ActiveMovementCommand = NULL;
+            CurrentState = WAIT_FOR_TAKEOFF;
+          }
+          else
+          {
+            NextInterval = STATE_MACHINE_EXECUTION_INTERVAL_PERFORMANCE;
+          }
+        }
+        else if (ActiveMovementCommand == UpFastCmd)
+        {
+          if (CurrentPilotY >= InitialHeadPosition.y)
+          {
+#if DIAGNOSTIC == 1
+            Diagnostic_printf("Moving head up, reached initial position of %f (current = %f)\n", InitialHeadPosition.y, CurrentPilotY);
+#endif // DIAGNOSTIC
+            XPLMCommandEnd(ActiveMovementCommand);
+            ActiveMovementCommand = NULL;
+            CurrentState = WAIT_FOR_TAKEOFF;
+          }
+          else
+          {
+            NextInterval = STATE_MACHINE_EXECUTION_INTERVAL_PERFORMANCE;
+          }
         }
       }
-      else if (ActiveMovementCommand == UpFastCmd)
-      {
-        if (CurrentPilotY >= TargetPilotY)
-        {
-          XPLMCommandEnd(ActiveMovementCommand);
-          ChangeDirection = TRUE;
-          ActiveMovementCommand = NULL;
-        }
-      }
-
-      // change direction of movement
-      if (ChangeDirection)
-      {
-        double PilotYOffset = -(LandingShakeAmplitude * exp(-2 * (elapsedSim - TouchdownTime)) * cos(30 * (elapsedSim - TouchdownTime)));
-        TargetPilotY = InitialHeadPosition.y + PilotYOffset;
-        StartMotion(TargetPilotY);
-      }
-      return STATE_MACHINE_EXECUTION_INTERVAL_PERFORMANCE;
       break;
   }
 
-  return STATE_MACHINE_EXECUTION_INTERVAL_NORMAL;
+  return NextInterval;
 }
 
 // handles the release command
