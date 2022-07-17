@@ -32,8 +32,10 @@ static XPLMDataRef    UpwardGearGroundForceNRef = NULL;
 static XPLMDataRef    TotalDownwardGForceRef    = NULL;
 static XPLMDataRef    GearVerticalForceNmRef    = NULL;
 static XPLMDataRef    VerticalSpeedRef          = NULL;
-static XPLMCommandRef DownCmd                   = NULL;
-static XPLMCommandRef UpCmd                     = NULL;
+static XPLMCommandRef RegularDownCmd            = NULL;
+static XPLMCommandRef RegularUpCmd              = NULL;
+static XPLMCommandRef FastDownCmd               = NULL;
+static XPLMCommandRef FastUpCmd                 = NULL;
 
 // prototype for the function that handles menu choices
 static void	MenuHandlerCallback(void *inMenuRef, void *inItemRef);
@@ -68,8 +70,10 @@ static float BottomTime;
 static pilots_head_t InitialHeadPosition;
 static double LandingShakeAmplitude;
 static double TargetPilotY;
-static XPLMCommandRef ActiveMovementCommand;
+static XPLMCommandRef UpCommand;
+static XPLMCommandRef DownCommand;
 static bool HaveInitialHeadPosition;
+static bool FastMovement;
 
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -166,11 +170,25 @@ static float StateMachine
         // scale shaking amplitude to vertical speed
         char msg[100];
         sprintf_s(msg, 100, "%.1f meters per second", VerticalSpeedMS);
-        XPLMSpeakString(msg);
+#if DIAGNOSTIC == 1
+        Diagnostic_printf("%s\n", msg);
+        //XPLMSpeakString(msg);
+#endif // DIAGNOSTIC
 
-        // scale shaking amplitude so 0.0 -> 0.7 m/s = shake amplitude 0.0 -> 0.1 m
+        if (VerticalSpeedMS > 0.5)
+        {
+          DownCommand = FastDownCmd;
+          UpCommand = FastUpCmd;
+        }
+        else
+        {
+          DownCommand = RegularDownCmd;
+          UpCommand = RegularUpCmd;
+        }
 
-        double Slope = 0.7 / 0.1;
+        // scale shaking amplitude so 0.0 -> 0.7 m/s = shake amplitude 0.0 -> 0.08 m
+
+        double Slope = 0.7 / 0.08;
         LandingShakeAmplitude = VerticalSpeedMS / Slope;
         if (LandingShakeAmplitude < 0) LandingShakeAmplitude = 0;
 
@@ -181,7 +199,7 @@ static float StateMachine
         if (LandingShakeAmplitude > 0)
         {
           TargetPilotY = InitialHeadPosition.y - LandingShakeAmplitude;
-          XPLMCommandBegin(DownCmd);
+          XPLMCommandBegin(DownCommand);
 #if DIAGNOSTIC == 1
           Diagnostic_printf("Moving head down, target position of %f\n", TargetPilotY);
 #endif // DIAGNOSTIC
@@ -201,7 +219,7 @@ static float StateMachine
 
         if (CurrentPilotY <= TargetPilotY)
         {
-          XPLMCommandEnd(DownCmd);
+          XPLMCommandEnd(DownCommand);
 #if DIAGNOSTIC == 1
           Diagnostic_printf("Bottom of bounce, current position is %f, going back to %f\n", CurrentPilotY, InitialHeadPosition.y);
 #endif // DIAGNOSTIC
@@ -214,7 +232,7 @@ static float StateMachine
       break;
 
     case MOVE_UP:
-        XPLMCommandBegin(UpCmd);
+        XPLMCommandBegin(UpCommand);
         CurrentState = RESTORING_POSITION;
         NextInterval = STATE_MACHINE_EXECUTION_INTERVAL_PERFORMANCE;
       break;
@@ -228,7 +246,7 @@ static float StateMachine
 #if DIAGNOSTIC == 1
           Diagnostic_printf("End of movement, current position is %f\n", CurrentPilotY);
 #endif // DIAGNOSTIC
-          XPLMCommandEnd(UpCmd);
+          XPLMCommandEnd(UpCommand);
           CurrentState = WAIT_FOR_FLYING;
         }
         else
@@ -378,13 +396,23 @@ int HeadMotion_Init
   {
     return FALSE;
   }
-  DownCmd = XPLMFindCommand("sim/general/down");
-  if (DownCmd == NULL)
+  RegularDownCmd = XPLMFindCommand("sim/general/down");
+  if (RegularDownCmd == NULL)
   {
     return FALSE;
   }
-  UpCmd = XPLMFindCommand("sim/general/up");
-  if (UpCmd == NULL)
+  RegularUpCmd = XPLMFindCommand("sim/general/up");
+  if (RegularUpCmd == NULL)
+  {
+    return FALSE;
+  }
+  FastDownCmd = XPLMFindCommand("sim/general/down_fast");
+  if (FastDownCmd == NULL)
+  {
+    return FALSE;
+  }
+  FastUpCmd = XPLMFindCommand("sim/general/up_fast");
+  if (FastUpCmd == NULL)
   {
     return FALSE;
   }
