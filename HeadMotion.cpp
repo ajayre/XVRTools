@@ -9,8 +9,8 @@
 #define MODULE_NAME "Head Motion"
 
 // time between executions of the state machine, in seconds
-#define STATE_MACHINE_EXECUTION_INTERVAL_NORMAL 0.25f
-#define STATE_MACHINE_EXECUTION_INTERVAL_PERFORMANCE 0.001f
+#define STATE_MACHINE_EXECUTION_INTERVAL_NORMAL      0.250f
+#define STATE_MACHINE_EXECUTION_INTERVAL_PERFORMANCE 0.010f
 // set to 1 to enable diagnostic output to Log.txt
 #define DIAGNOSTIC 1
 
@@ -41,7 +41,7 @@ static void	MenuHandlerCallback(void *inMenuRef, void *inItemRef);
 typedef enum _states_t
 {
   START,
-  WAIT_FOR_TAKEOFF,
+  WAIT_FOR_FLYING,
   WAIT_FOR_LANDING,
   TOUCHDOWN,
   MOVE_UP,
@@ -68,6 +68,7 @@ static pilots_head_t InitialHeadPosition;
 static double LandingShakeAmplitude;
 static double TargetPilotY;
 static XPLMCommandRef ActiveMovementCommand;
+static bool HaveInitialHeadPosition;
 
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -115,17 +116,16 @@ static float StateMachine
     case START:
       // wait for x-plane to drop the plane onto the ground at the start
       // of the simulation
-      if (elapsedSim >= 2.0)
+      if (XPLMGetElapsedTime() >= 2.0)
       {
 #if DIAGNOSTIC == 1
         Diagnostic_printf("Waiting for X-plane to finish initial aircraft drop\n");
 #endif // DIAGNOSTIC
-        CurrentState = WAIT_FOR_TAKEOFF;
-        GetHeadPosition(&InitialHeadPosition);
+        CurrentState = WAIT_FOR_FLYING;
       }
       break;
 
-    case WAIT_FOR_TAKEOFF:
+    case WAIT_FOR_FLYING:
       // wait for all wheels off the ground
       if (XPLMGetDatai(AnyWheelOnGroundRef) == FALSE)
       {
@@ -133,6 +133,10 @@ static float StateMachine
         Diagnostic_printf("All wheels off the ground, waiting for landing...\n");
 #endif // DIAGNOSTIC
         CurrentState = WAIT_FOR_LANDING;
+        if (HaveInitialHeadPosition == FALSE)
+        {
+          GetHeadPosition(&InitialHeadPosition);
+        }
       }
       break;
 
@@ -146,7 +150,7 @@ static float StateMachine
         Diagnostic_printf("%fN %fG %fNm %fNm %fNm\n", XPLMGetDataf(UpwardGearGroundForceNRef), XPLMGetDataf(TotalDownwardGForceRef), GearForces[0], GearForces[1], GearForces[2]);
 #endif // DIAGNOSTIC
         CurrentState = TOUCHDOWN;
-        TouchdownTime = elapsedSim;
+        TouchdownTime = XPLMGetElapsedTime();
 #if DIAGNOSTIC == 1
         Diagnostic_printf("Got head height of = %f\n", InitialHeadPosition.y);
 #endif // DIAGNOSTIC
@@ -155,10 +159,9 @@ static float StateMachine
 
         // scale shaking amplitude so TouchdownG 0.0 -> 2.0 = shake amplitude 0.0 -> 0.005
 
-        double Slope = 2.0 / 0.005;
+        double Slope = 2.0 / 0.05;
         LandingShakeAmplitude = TouchDownG / Slope;
         if (LandingShakeAmplitude < 0) LandingShakeAmplitude = 0;
-        LandingShakeAmplitude = 0.00001;
 
 #if DIAGNOSTIC == 1
         Diagnostic_printf("Landing shake amplitude = %fm\n", LandingShakeAmplitude);
@@ -176,7 +179,7 @@ static float StateMachine
         }
         else
         {
-          CurrentState = WAIT_FOR_TAKEOFF;
+          CurrentState = WAIT_FOR_FLYING;
         }
       }
       break;
@@ -192,7 +195,7 @@ static float StateMachine
           Diagnostic_printf("Bottom of bounce, current position is %f, going back to %f\n", CurrentPilotY, InitialHeadPosition.y);
 #endif // DIAGNOSTIC
           CurrentState = MOVE_UP;
-          BottomTime = elapsedSim;
+          BottomTime = XPLMGetElapsedTime();
         }
 
         NextInterval = STATE_MACHINE_EXECUTION_INTERVAL_PERFORMANCE;
@@ -200,7 +203,7 @@ static float StateMachine
       break;
 
     case MOVE_UP:
-      if (elapsedSim >= (BottomTime + 0.2))
+      if (XPLMGetElapsedTime() >= (BottomTime + 0.2))
       {
         XPLMCommandBegin(UpCmd);
         CurrentState = RESTORING_POSITION;
@@ -218,7 +221,7 @@ static float StateMachine
           Diagnostic_printf("End of movement, current position is %f\n", CurrentPilotY);
 #endif // DIAGNOSTIC
           XPLMCommandEnd(UpCmd);
-          CurrentState = WAIT_FOR_TAKEOFF;
+          CurrentState = WAIT_FOR_FLYING;
         }
         else
         {
@@ -376,6 +379,8 @@ int HeadMotion_Init
   // register the state machine callback
   XPLMRegisterFlightLoopCallback(StateMachine, STATE_MACHINE_EXECUTION_INTERVAL_NORMAL, NULL);
 
+  HaveInitialHeadPosition = FALSE;
+
   return TRUE;
 }
 
@@ -395,9 +400,10 @@ void HeadMotion_ReceiveMessage
 #endif // DIAGNOSTIC
     Ready = TRUE;
     CurrentState = START;
-    GetHeadPosition(&InitialHeadPosition);
+    HaveInitialHeadPosition = FALSE;
   }
   else if ((inMessage == XPLM_MSG_PLANE_UNLOADED) || (inMessage == XPLM_MSG_PLANE_CRASHED))
   {
+    CurrentState = START;
   }
 }
