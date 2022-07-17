@@ -73,35 +73,6 @@ static XPLMCommandRef ActiveMovementCommand;
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 // INTERNAL FUNCTIONS
 
-/*// rotates the pilots head up or down
-static void MovePilotsHeadUpDown
-(
-  double Degrees  // negative is down, positive is up
-)
-{
-  double PilotPitch = XPLMGetDataf(PilotPitchRef);
-  XPLMSetDataf(PilotPitchRef, PilotPitch + Degrees);
-}
-
-// raises or lowers the pilots head
-static void RaiseLowerPilotsHead
-  (
-  double Meters  // negative is down, positie is up
-  )
-{
-  double PilotY = XPLMGetDataf(PilotYRef);
-  XPLMSetDataf(PilotYRef, PilotY + Meters);
-}
-
-// sets the height of the pilots head
-static void SetPilotHeadHeight
-  (
-  double Meters  // height to set
-  )
-{
-  XPLMSetDataf(PilotYRef, Meters);
-}*/
-
 // enables the touch down motion
 static void DisableTouchDownMotion
   (
@@ -122,38 +93,6 @@ static void GetHeadPosition
   Position->Heading = XPLMGetDataf(PilotHeadingRef);
   Position->Pitch   = XPLMGetDataf(PilotPitchRef);
   Position->Roll    = XPLMGetDataf(PilotRollRef);
-}
-
-// starts the pilots head motion
-static void StartMotion
-  (
-  double TargetPilotY  // target Y position for pilot's head
-  )
-{
-  double CurrentPilotY = XPLMGetDataf(PilotYRef);
-  if (TargetPilotY < CurrentPilotY)
-  {
-    ActiveMovementCommand = DownCmd;
-    XPLMCommandBegin(ActiveMovementCommand);
-  }
-  else if (TargetPilotY > CurrentPilotY)
-  {
-    ActiveMovementCommand = UpCmd;
-    XPLMCommandBegin(ActiveMovementCommand);
-  }
-}
-
-// stops the current motion
-static void StopMotion
-  (
-  void
-  )
-{
-  if (ActiveMovementCommand != NULL)
-  {
-    XPLMCommandEnd(ActiveMovementCommand);
-    ActiveMovementCommand = NULL;
-  }
 }
 
 // execute the state machine, called periodically by x-plane
@@ -219,26 +158,16 @@ static float StateMachine
         double Slope = 2.0 / 0.005;
         LandingShakeAmplitude = TouchDownG / Slope;
         if (LandingShakeAmplitude < 0) LandingShakeAmplitude = 0;
-        LandingShakeAmplitude = 0.0001;
+        LandingShakeAmplitude = 0.00001;
 
 #if DIAGNOSTIC == 1
         Diagnostic_printf("Landing shake amplitude = %fm\n", LandingShakeAmplitude);
 #endif // DIAGNOSTIC
 
-        //LandingShakeAmplitude = 0.05;
-        //LandingShakeAmplitude = 0.005;
-
-        // https://www.calculushowto.com/calculus-definitions/damped-sine-wave/
-        // https://www.desmos.com/calculator
-        // y\ =\ -\left(0.1e^{-2x}\cdot\cos\left(30x\right)\right)
-
         if (LandingShakeAmplitude > 0)
         {
-          //double PilotYOffset = -(LandingShakeAmplitude * exp(-2 * (elapsedSim - TouchdownTime)) * cos(30 * (elapsedSim - TouchdownTime)));
-          //TargetPilotY = InitialHeadPosition.y + PilotYOffset;
           TargetPilotY = InitialHeadPosition.y - LandingShakeAmplitude;
           XPLMCommandBegin(DownCmd);
-          //StartMotion(TargetPilotY);
 #if DIAGNOSTIC == 1
           Diagnostic_printf("Moving head down, target position of %f\n", TargetPilotY);
 #endif // DIAGNOSTIC
@@ -262,77 +191,12 @@ static float StateMachine
 #if DIAGNOSTIC == 1
           Diagnostic_printf("Bottom of bounce, current position is %f, going back to %f\n", CurrentPilotY, InitialHeadPosition.y);
 #endif // DIAGNOSTIC
-
           CurrentState = MOVE_UP;
           BottomTime = elapsedSim;
-
-          //ChangeDirection = TRUE;
-          //ActiveMovementCommand = NULL;
-          //XPLMCommandBegin(UpCmd);
-          //CurrentState = RESTORING_POSITION;
         }
 
         NextInterval = STATE_MACHINE_EXECUTION_INTERVAL_PERFORMANCE;
       }
-
-      /*if (elapsedSim > (TouchdownTime + 0.5))
-      {
-        StopMotion();
-#if DIAGNOSTIC == 1
-        Diagnostic_printf("Bottom of bounce, current position is %f, going back to %f\n", XPLMGetDataf(PilotYRef), InitialHeadPosition.y);
-#endif // DIAGNOSTIC
-        StartMotion(InitialHeadPosition.y);
-        CurrentState = RESTORING_POSITION;
-      }*/
-
-      //NextInterval = STATE_MACHINE_EXECUTION_INTERVAL_PERFORMANCE;
-
-      /*// if it's been 1.5 seconds since first wheel down then
-      // end head motion
-      if (elapsedSim > (TouchdownTime + 1.5))
-      {
-#if DIAGNOSTIC == 1
-        Diagnostic_printf("On ground long enough, restoring y to %f\n", InitialHeadPosition.y);
-#endif // DIAGNOSTIC
-
-        StartMotion(InitialHeadPosition.y);
-        CurrentState = RESTORING_POSITION;
-
-        NextInterval = STATE_MACHINE_EXECUTION_INTERVAL_PERFORMANCE;
-      }
-      else
-      {
-        // check if we need to change the direction of movement
-        double CurrentPilotY = XPLMGetDataf(PilotYRef);
-        bool ChangeDirection = FALSE;
-        if (ActiveMovementCommand == DownFastCmd)
-        {
-          if (CurrentPilotY <= TargetPilotY)
-          {
-            XPLMCommandEnd(ActiveMovementCommand);
-            ChangeDirection = TRUE;
-            ActiveMovementCommand = NULL;
-          }
-        }
-        else if (ActiveMovementCommand == UpFastCmd)
-        {
-          if (CurrentPilotY >= TargetPilotY)
-          {
-            XPLMCommandEnd(ActiveMovementCommand);
-            ChangeDirection = TRUE;
-            ActiveMovementCommand = NULL;
-          }
-        }
-
-        // change direction of movement
-        if (ChangeDirection)
-        {
-          double PilotYOffset = -(LandingShakeAmplitude * exp(-2 * (elapsedSim - TouchdownTime)) * cos(30 * (elapsedSim - TouchdownTime)));
-          TargetPilotY = InitialHeadPosition.y + PilotYOffset;
-          StartMotion(TargetPilotY);
-        }
-        NextInterval = STATE_MACHINE_EXECUTION_INTERVAL_PERFORMANCE;
-      }*/
       break;
 
     case MOVE_UP:
@@ -354,7 +218,6 @@ static float StateMachine
           Diagnostic_printf("End of movement, current position is %f\n", CurrentPilotY);
 #endif // DIAGNOSTIC
           XPLMCommandEnd(UpCmd);
-          //ActiveMovementCommand = NULL;
           CurrentState = WAIT_FOR_TAKEOFF;
         }
         else
@@ -536,11 +399,5 @@ void HeadMotion_ReceiveMessage
   }
   else if ((inMessage == XPLM_MSG_PLANE_UNLOADED) || (inMessage == XPLM_MSG_PLANE_CRASHED))
   {
-    CurrentState = START;
-//#if DIAGNOSTIC == 1
-//    Diagnostic_printf("Plane crashed or unloaded, stopped\n");
-//#endif // DIAGNOSTIC
-//    Ready = FALSE;
-    StopMotion();
   }
 }
