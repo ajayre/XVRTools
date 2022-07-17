@@ -31,6 +31,7 @@ static XPLMDataRef    AnyWheelOnGroundRef       = NULL;
 static XPLMDataRef    UpwardGearGroundForceNRef = NULL;
 static XPLMDataRef    TotalDownwardGForceRef    = NULL;
 static XPLMDataRef    GearVerticalForceNmRef    = NULL;
+static XPLMDataRef    VerticalSpeedRef          = NULL;
 static XPLMCommandRef DownCmd                   = NULL;
 static XPLMCommandRef UpCmd                     = NULL;
 
@@ -155,12 +156,22 @@ static float StateMachine
         Diagnostic_printf("Got head height of = %f\n", InitialHeadPosition.y);
 #endif // DIAGNOSTIC
 
-        double TouchDownG = XPLMGetDataf(TotalDownwardGForceRef) - 1.0;
+        double VerticalSpeedMS = fabs(XPLMGetDataf(VerticalSpeedRef));
 
-        // scale shaking amplitude so TouchdownG 0.0 -> 2.0 = shake amplitude 0.0 -> 0.005
+        // greater than 2m/s is considered a hard landing:
+        // https://en.wikipedia.org/wiki/Hard_landing#:~:text=Landing%20is%20the%20final%20phase,classed%20by%20crew%20as%20hard.
+        // normal descent rate is 60-180FPM (0.3-0.9m/s). Over 240FPM (1.2m/s) is hard and requires an inspection:
+        // https://www.boldmethod.com/learn-to-fly/aerodynamics/why-its-hard-to-land-smooth-in-empty-jets/
 
-        double Slope = 2.0 / 0.05;
-        LandingShakeAmplitude = TouchDownG / Slope;
+        // scale shaking amplitude to vertical speed
+        char msg[100];
+        sprintf_s(msg, 100, "%.1f meters per second", VerticalSpeedMS);
+        XPLMSpeakString(msg);
+
+        // scale shaking amplitude so 0.0 -> 0.7 m/s = shake amplitude 0.0 -> 0.1 m
+
+        double Slope = 0.7 / 0.1;
+        LandingShakeAmplitude = VerticalSpeedMS / Slope;
         if (LandingShakeAmplitude < 0) LandingShakeAmplitude = 0;
 
 #if DIAGNOSTIC == 1
@@ -203,12 +214,9 @@ static float StateMachine
       break;
 
     case MOVE_UP:
-      if (XPLMGetElapsedTime() >= (BottomTime + 0.2))
-      {
         XPLMCommandBegin(UpCmd);
         CurrentState = RESTORING_POSITION;
         NextInterval = STATE_MACHINE_EXECUTION_INTERVAL_PERFORMANCE;
-      }
       break;
 
     case RESTORING_POSITION:
@@ -362,6 +370,11 @@ int HeadMotion_Init
   }
   GearVerticalForceNmRef = XPLMFindDataRef("sim/flightmodel2/gear/tire_vertical_force_n_mtr");
   if (GearVerticalForceNmRef == NULL)
+  {
+    return FALSE;
+  }
+  VerticalSpeedRef = XPLMFindDataRef("sim/flightmodel/position/local_vy");
+  if (VerticalSpeedRef == NULL)
   {
     return FALSE;
   }
