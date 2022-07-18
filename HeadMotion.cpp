@@ -10,9 +10,7 @@
 
 // time between executions of the state machine, in seconds
 #define STATE_MACHINE_EXECUTION_INTERVAL_NORMAL      0.250f
-#define STATE_MACHINE_EXECUTION_INTERVAL_PERFORMANCE 0.010f
-// set to 1 to enable diagnostic output to Log.txt
-#define DIAGNOSTIC 1
+#define STATE_MACHINE_EXECUTION_INTERVAL_PERFORMANCE 0.005f
 
 // menu item IDs
 #define MENU_ITEM_ID_TOUCHDOWN_ENABLE 1
@@ -32,6 +30,8 @@ static XPLMDataRef    UpwardGearGroundForceNRef = NULL;
 static XPLMDataRef    TotalDownwardGForceRef    = NULL;
 static XPLMDataRef    GearVerticalForceNmRef    = NULL;
 static XPLMDataRef    VerticalSpeedRef          = NULL;
+static XPLMDataRef    FlightTimeRef             = NULL;
+static XPLMDataRef    AllWheelsOnGroundRef      = NULL;
 static XPLMCommandRef RegularDownCmd            = NULL;
 static XPLMCommandRef RegularUpCmd              = NULL;
 static XPLMCommandRef FastDownCmd               = NULL;
@@ -48,7 +48,8 @@ typedef enum _states_t
   WAIT_FOR_LANDING,
   TOUCHDOWN,
   MOVE_UP,
-  RESTORING_POSITION
+  RESTORING_POSITION,
+  WAIT_FOR_NOSE
 } states_t;
 
 typedef struct _pilots_head_t
@@ -77,7 +78,8 @@ static bool FastMovement;
 static bool Enabled;
 static XPLMMenuID myMenu;
 static int MenuItem_Enable;
-
+static bool Terminate_Motion;
+static double PreviousFlightTime;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 // INTERNAL FUNCTIONS
@@ -116,6 +118,19 @@ static float StateMachine
 {
   float GearForces[3];
   float NextInterval = STATE_MACHINE_EXECUTION_INTERVAL_NORMAL;
+  float FlightTime = XPLMGetDataf(FlightTimeRef);
+
+  // new aircraft or location loaded, initialize
+  if (FlightTime < PreviousFlightTime)
+  {
+    Ready = TRUE;
+    CurrentState = START;
+    HaveInitialHeadPosition = FALSE;
+#if DIAGNOSTIC == 1
+    Diagnostic_printf("Start\n");
+#endif // DIAGNOSTIC
+  }
+  PreviousFlightTime = FlightTime;
 
   if (Enabled == FALSE) return NextInterval;
   if (Ready == FALSE) return NextInterval;
@@ -125,99 +140,123 @@ static float StateMachine
     case START:
       // wait for x-plane to drop the plane onto the ground at the start
       // of the simulation
-      if (XPLMGetElapsedTime() >= 2.0)
+      if (FlightTime >= 3.0)
       {
 #if DIAGNOSTIC == 1
         Diagnostic_printf("Waiting for X-plane to finish initial aircraft drop\n");
 #endif // DIAGNOSTIC
         CurrentState = WAIT_FOR_FLYING;
+        Terminate_Motion = FALSE;
       }
       break;
 
     case WAIT_FOR_FLYING:
-      // wait for all wheels off the ground
-      if (XPLMGetDatai(AnyWheelOnGroundRef) == FALSE)
+      if (Terminate_Motion)
       {
-#if DIAGNOSTIC == 1
-        Diagnostic_printf("All wheels off the ground, waiting for landing...\n");
-#endif // DIAGNOSTIC
-        CurrentState = WAIT_FOR_LANDING;
-        if (HaveInitialHeadPosition == FALSE)
+        // do nothing, keep in this state
+      }
+      else
+      {
+        // wait for all wheels off the ground
+        if (XPLMGetDatai(AnyWheelOnGroundRef) == FALSE)
         {
-          GetHeadPosition(&InitialHeadPosition);
+#if DIAGNOSTIC == 1
+          Diagnostic_printf("All wheels off the ground, waiting for landing...\n");
+#endif // DIAGNOSTIC
+          CurrentState = WAIT_FOR_LANDING;
+          if (HaveInitialHeadPosition == FALSE)
+          {
+            GetHeadPosition(&InitialHeadPosition);
+          }
         }
       }
       break;
 
     case WAIT_FOR_LANDING:
-      // at least one wheel on the ground
-      if (XPLMGetDatai(AnyWheelOnGroundRef) == TRUE)
+      if (Terminate_Motion)
       {
-#if DIAGNOSTIC == 1
-        Diagnostic_printf("At least one wheel on the ground, start landing head motion\n");
-        XPLMGetDatavf(GearVerticalForceNmRef, GearForces, 0, 3);
-        Diagnostic_printf("%fN %fG %fNm %fNm %fNm\n", XPLMGetDataf(UpwardGearGroundForceNRef), XPLMGetDataf(TotalDownwardGForceRef), GearForces[0], GearForces[1], GearForces[2]);
-#endif // DIAGNOSTIC
-        CurrentState = TOUCHDOWN;
-        TouchdownTime = XPLMGetElapsedTime();
-#if DIAGNOSTIC == 1
-        Diagnostic_printf("Got head height of = %f\n", InitialHeadPosition.y);
-#endif // DIAGNOSTIC
-
-        double VerticalSpeedMS = fabs(XPLMGetDataf(VerticalSpeedRef));
-
-        // greater than 2m/s is considered a hard landing:
-        // https://en.wikipedia.org/wiki/Hard_landing#:~:text=Landing%20is%20the%20final%20phase,classed%20by%20crew%20as%20hard.
-        // normal descent rate is 60-180FPM (0.3-0.9m/s). Over 240FPM (1.2m/s) is hard and requires an inspection:
-        // https://www.boldmethod.com/learn-to-fly/aerodynamics/why-its-hard-to-land-smooth-in-empty-jets/
-
-        // scale shaking amplitude to vertical speed
-        char msg[100];
-        sprintf_s(msg, 100, "%.1f meters per second", VerticalSpeedMS);
-#if DIAGNOSTIC == 1
-        Diagnostic_printf("%s\n", msg);
-        //XPLMSpeakString(msg);
-#endif // DIAGNOSTIC
-
-        if (VerticalSpeedMS > 0.5)
+        CurrentState = WAIT_FOR_FLYING;
+      }
+      else
+      {
+        // at least one wheel on the ground
+        if (XPLMGetDatai(AnyWheelOnGroundRef) == TRUE)
         {
-          DownCommand = FastDownCmd;
-          UpCommand = FastUpCmd;
-        }
-        else
-        {
-          DownCommand = RegularDownCmd;
-          UpCommand = RegularUpCmd;
-        }
-
-        // scale shaking amplitude so 0.0 -> 0.7 m/s = shake amplitude 0.0 -> 0.08 m
-
-        double Slope = 0.7 / 0.08;
-        LandingShakeAmplitude = VerticalSpeedMS / Slope;
-        if (LandingShakeAmplitude < 0) LandingShakeAmplitude = 0;
-
 #if DIAGNOSTIC == 1
-        Diagnostic_printf("Landing shake amplitude = %fm\n", LandingShakeAmplitude);
+          Diagnostic_printf("At least one wheel on the ground, start landing head motion\n");
+          XPLMGetDatavf(GearVerticalForceNmRef, GearForces, 0, 3);
+          Diagnostic_printf("%fN %fG %fNm %fNm %fNm\n", XPLMGetDataf(UpwardGearGroundForceNRef), XPLMGetDataf(TotalDownwardGForceRef), GearForces[0], GearForces[1], GearForces[2]);
+#endif // DIAGNOSTIC
+          CurrentState = TOUCHDOWN;
+          TouchdownTime = XPLMGetElapsedTime();
+#if DIAGNOSTIC == 1
+          Diagnostic_printf("Got head height of = %f\n", InitialHeadPosition.y);
 #endif // DIAGNOSTIC
 
-        if (LandingShakeAmplitude > 0)
-        {
-          TargetPilotY = InitialHeadPosition.y - LandingShakeAmplitude;
-          XPLMCommandBegin(DownCommand);
+          double VerticalSpeedMS = fabs(XPLMGetDataf(VerticalSpeedRef));
+
+          // greater than 2m/s is considered a hard landing:
+          // https://en.wikipedia.org/wiki/Hard_landing#:~:text=Landing%20is%20the%20final%20phase,classed%20by%20crew%20as%20hard.
+          // normal descent rate is 60-180FPM (0.3-0.9m/s). Over 240FPM (1.2m/s) is hard and requires an inspection:
+          // https://www.boldmethod.com/learn-to-fly/aerodynamics/why-its-hard-to-land-smooth-in-empty-jets/
+
+          // scale shaking amplitude to vertical speed
+          char msg[100];
+          sprintf_s(msg, 100, "%.1f meters per second", VerticalSpeedMS);
 #if DIAGNOSTIC == 1
-          Diagnostic_printf("Moving head down, target position of %f\n", TargetPilotY);
+          Diagnostic_printf("%s\n", msg);
+          //XPLMSpeakString(msg);
 #endif // DIAGNOSTIC
 
-          NextInterval = STATE_MACHINE_EXECUTION_INTERVAL_PERFORMANCE;
-        }
-        else
-        {
-          CurrentState = WAIT_FOR_FLYING;
+          if (VerticalSpeedMS > 0.5)
+          {
+            DownCommand = RegularDownCmd;
+            UpCommand = RegularUpCmd;
+            // not enough FPS in VR for the fast motion to work reliably
+            //DownCommand = FastDownCmd;
+            //UpCommand = FastUpCmd;
+          }
+          else
+          {
+            DownCommand = RegularDownCmd;
+            UpCommand = RegularUpCmd;
+          }
+
+          // scale shaking amplitude so 0.0 -> 0.7 m/s = shake amplitude 0.0 -> 0.08 m
+
+          double Slope = 0.7 / 0.08;
+          LandingShakeAmplitude = VerticalSpeedMS / Slope;
+          if (LandingShakeAmplitude < 0) LandingShakeAmplitude = 0;
+
+#if DIAGNOSTIC == 1
+          Diagnostic_printf("Landing shake amplitude = %fm\n", LandingShakeAmplitude);
+#endif // DIAGNOSTIC
+
+          if (LandingShakeAmplitude > 0)
+          {
+            TargetPilotY = InitialHeadPosition.y - LandingShakeAmplitude;
+            XPLMCommandBegin(DownCommand);
+#if DIAGNOSTIC == 1
+            Diagnostic_printf("Moving head down, target position of %f\n", TargetPilotY);
+#endif // DIAGNOSTIC
+
+            NextInterval = STATE_MACHINE_EXECUTION_INTERVAL_PERFORMANCE;
+          }
+          else
+          {
+            CurrentState = WAIT_FOR_FLYING;
+          }
         }
       }
       break;
 
     case TOUCHDOWN:
+      if (Terminate_Motion)
+      {
+        XPLMCommandEnd(DownCommand);
+        CurrentState = WAIT_FOR_FLYING;
+      }
+      else
       {
         double CurrentPilotY = XPLMGetDataf(PilotYRef);
 
@@ -236,12 +275,25 @@ static float StateMachine
       break;
 
     case MOVE_UP:
+      if (Terminate_Motion)
+      {
+        CurrentState = WAIT_FOR_FLYING;
+      }
+      else
+      {
         XPLMCommandBegin(UpCommand);
         CurrentState = RESTORING_POSITION;
         NextInterval = STATE_MACHINE_EXECUTION_INTERVAL_PERFORMANCE;
+      }
       break;
 
     case RESTORING_POSITION:
+      if (Terminate_Motion)
+      {
+        XPLMCommandEnd(UpCommand);
+        CurrentState = WAIT_FOR_FLYING;
+      }
+      else
       {
         double CurrentPilotY = XPLMGetDataf(PilotYRef);
 
@@ -251,10 +303,44 @@ static float StateMachine
           Diagnostic_printf("End of movement, current position is %f\n", CurrentPilotY);
 #endif // DIAGNOSTIC
           XPLMCommandEnd(UpCommand);
-          CurrentState = WAIT_FOR_FLYING;
+
+          // check if nose wheel is down
+          XPLMGetDatavf(GearVerticalForceNmRef, GearForces, 0, 3);
+          // nose wheel is not down
+          if (GearForces[0] == 0)
+          {
+            CurrentState = WAIT_FOR_NOSE;
+          }
+          else
+          {
+            CurrentState = WAIT_FOR_FLYING;
+          }
         }
         else
         {
+          NextInterval = STATE_MACHINE_EXECUTION_INTERVAL_PERFORMANCE;
+        }
+      }
+      break;
+
+    case WAIT_FOR_NOSE:
+      if (Terminate_Motion)
+      {
+        CurrentState = WAIT_FOR_FLYING;
+      }
+      else
+      {
+        // wait for all wheels on the ground
+        if (XPLMGetDatai(AllWheelsOnGroundRef) == TRUE)
+        {
+          // small bump
+          TargetPilotY = InitialHeadPosition.y - 0.005;
+          XPLMCommandBegin(DownCommand);
+#if DIAGNOSTIC == 1
+          Diagnostic_printf("Nose down so moving head down, target position of %f\n", TargetPilotY);
+#endif // DIAGNOSTIC
+
+          CurrentState = TOUCHDOWN;
           NextInterval = STATE_MACHINE_EXECUTION_INTERVAL_PERFORMANCE;
         }
       }
@@ -370,6 +456,11 @@ int HeadMotion_Init
   {
     return FALSE;
   }
+  AllWheelsOnGroundRef = XPLMFindDataRef("sim/flightmodel/failures/onground_all");
+  if (AllWheelsOnGroundRef == NULL)
+  {
+    return FALSE;
+  }
 
   UpwardGearGroundForceNRef = XPLMFindDataRef("sim/flightmodel/forces/fnrml_gear");
   if (UpwardGearGroundForceNRef == NULL)
@@ -388,6 +479,11 @@ int HeadMotion_Init
   }
   VerticalSpeedRef = XPLMFindDataRef("sim/flightmodel/position/local_vy");
   if (VerticalSpeedRef == NULL)
+  {
+    return FALSE;
+  }
+  FlightTimeRef = XPLMFindDataRef("sim/time/total_flight_time_sec");
+  if (FlightTimeRef == NULL)
   {
     return FALSE;
   }
@@ -431,15 +527,19 @@ void HeadMotion_ReceiveMessage
   // a new aircraft has been loaded
   if (inMessage == XPLM_MSG_PLANE_LOADED)
   {
-#if DIAGNOSTIC == 1
-    Diagnostic_printf("Ready to go\n");
-#endif // DIAGNOSTIC
-    Ready = TRUE;
-    CurrentState = START;
-    HaveInitialHeadPosition = FALSE;
+//#if DIAGNOSTIC == 1
+    //Diagnostic_printf("Ready to go\n");
+//#endif // DIAGNOSTIC
+    //Ready = TRUE;
+    //CurrentState = START;
+    //HaveInitialHeadPosition = FALSE;
+    PreviousFlightTime = 10;
   }
   else if ((inMessage == XPLM_MSG_PLANE_UNLOADED) || (inMessage == XPLM_MSG_PLANE_CRASHED))
   {
-    CurrentState = START;
+#if DIAGNOSTIC == 1
+    Diagnostic_printf("Aircraft crashed or unloaded\n");
+#endif // DIAGNOSTIC
+    Terminate_Motion = TRUE;
   }
 }

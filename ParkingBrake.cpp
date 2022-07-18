@@ -8,9 +8,6 @@
 
 #define MODULE_NAME "Parking Brake"
 
-// set to 1 to enable diagnostic output to Log.txt
-#define DIAGNOSTIC 1
-
 // menu item IDs
 #define MENU_ITEM_ID_RELEASE 1
 

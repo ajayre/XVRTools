@@ -35,8 +35,6 @@
 #define STATE_MACHINE_EXECUTION_INTERVAL 0.25f
 // the ratio of the gears when they are down
 #define GEAR_DOWN_RATIO 1.0f
-// set to 1 to enable diagnostic output to Log.txt
-#define DIAGNOSTIC 1
 
 // menu item IDs
 #define MENU_ITEM_ID_ENABLE 1
