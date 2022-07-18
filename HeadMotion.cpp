@@ -15,7 +15,7 @@
 #define DIAGNOSTIC 1
 
 // menu item IDs
-#define MENU_ITEM_ID_TOUCHDOWN_DISABLE 1
+#define MENU_ITEM_ID_TOUCHDOWN_ENABLE 1
 
 // custom commands
 static XPLMCommandRef DisableTouchDownCmd = NULL;
@@ -74,6 +74,9 @@ static XPLMCommandRef UpCommand;
 static XPLMCommandRef DownCommand;
 static bool HaveInitialHeadPosition;
 static bool FastMovement;
+static bool Enabled;
+static XPLMMenuID myMenu;
+static int MenuItem_Enable;
 
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -114,6 +117,7 @@ static float StateMachine
   float GearForces[3];
   float NextInterval = STATE_MACHINE_EXECUTION_INTERVAL_NORMAL;
 
+  if (Enabled == FALSE) return NextInterval;
   if (Ready == FALSE) return NextInterval;
 
   switch (CurrentState)
@@ -286,9 +290,11 @@ static void MenuHandlerCallback
 )
 {
   // user chose to release the parking brake
-  if ((int)inItemRef == MENU_ITEM_ID_TOUCHDOWN_DISABLE)
+  if ((int)inItemRef == MENU_ITEM_ID_TOUCHDOWN_ENABLE)
   {
-    DisableTouchDownMotion();
+    Enabled = !Enabled;
+
+    XPLMCheckMenuItem(myMenu, MenuItem_Enable, Enabled ? xplm_Menu_Checked : xplm_Menu_Unchecked);
   }
 }
 
@@ -303,10 +309,9 @@ int HeadMotion_Init
   XPLMMenuID ParentMenuId
   )
 {
-  XPLMMenuID myMenu;
-  int mySubMenuItem;
+  Enabled = TRUE;
 
-  mySubMenuItem = XPLMAppendMenuItem(
+  int mySubMenuItem = XPLMAppendMenuItem(
     ParentMenuId,
     MODULE_NAME,
     0,
@@ -321,23 +326,13 @@ int HeadMotion_Init
   );
 
   // Append menu items to our submenu
-  XPLMAppendMenuItem(
+  MenuItem_Enable = XPLMAppendMenuItem(
     myMenu,
-    "Disable touch-down motion",
-    (void *)MENU_ITEM_ID_TOUCHDOWN_DISABLE,
+    "Enable touch-down motion",
+    (void *)MENU_ITEM_ID_TOUCHDOWN_ENABLE,
     1);
 
-  // create custom command
-  char CmdName[100];
-  sprintf_s(CmdName, 100, "%s//%s//Disable touch-down motion", PLUGIN_NAME, MODULE_NAME);
-  char CmdDesc[100];
-  sprintf_s(CmdDesc, 100, "Disable touch-down motion (%s-%s)", PLUGIN_NAME, MODULE_NAME);
-  DisableTouchDownCmd = XPLMCreateCommand(CmdName, CmdDesc);
-  XPLMRegisterCommandHandler(
-    DisableTouchDownCmd, // in Command name
-    ReleaseCmdHandler,   // in Handler
-    1,                   // Receive input before plugin windows
-    (void *)0);          // inRefcon
+  XPLMCheckMenuItem(myMenu, MenuItem_Enable, xplm_Menu_Checked);
 
   // get datarefs
   PilotXRef = XPLMFindDataRef("sim/graphics/view/pilots_head_x");
