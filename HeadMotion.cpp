@@ -395,7 +395,7 @@ int HeadMotion_Init
   XPLMMenuID ParentMenuId
   )
 {
-  Enabled = TRUE;
+  Enabled = FALSE;
 
   int mySubMenuItem = XPLMAppendMenuItem(
     ParentMenuId,
@@ -418,7 +418,10 @@ int HeadMotion_Init
     (void *)MENU_ITEM_ID_TOUCHDOWN_ENABLE,
     1);
 
-  XPLMCheckMenuItem(myMenu, MenuItem_Enable, xplm_Menu_Checked);
+  if (Enabled == TRUE)
+  {
+    XPLMCheckMenuItem(myMenu, MenuItem_Enable, xplm_Menu_Checked);
+  }
 
   // get datarefs
   PilotXRef = XPLMFindDataRef("sim/graphics/view/pilots_head_x");
